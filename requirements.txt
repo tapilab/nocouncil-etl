@@ -1,0 +1,10 @@
+boxsdk
+bs4
+chromadb
+dotenv
+ollama
+pandas
+requests
+sentence-transformers[onnx]
+tqdm
+whisper
