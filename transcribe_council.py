@@ -1,9 +1,10 @@
 """
-Transcribes each video in BOX_PATH/.mp4 using Whisper (version determined by WHISPER_VERSION).
-Output written to BOX_PATH/.txt (raw text output) and BOX_PATH/.json (time stamped chunks).
-List of links stored in BOX_PATH/data.json.
+- Fetch videos from council website and saves to BOX_PATH.
+- Transcribes each video in BOX_PATH/.mp4 using Whisper (version determined by WHISPER_VERSION).
+- Writes transcriptions to BOX_PATH/.txt (raw text output) and BOX_PATH/.json (time stamped chunks).
+- Writes updated list of links to BOX_PATH/data.json.
 
-Skips any videos that already have a corresponding .json transcript file.
+Tries to be smart and skips downloading/transcribing links that already have a .mp4 or .json in BOX_PATH.
 """
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
