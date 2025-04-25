@@ -16,9 +16,13 @@ import json
 import numpy as np
 import ollama
 import os
+import pandas as pd
+import re
 from sentence_transformers import SentenceTransformer
 from typing import List
 
+load_dotenv()  # Loads variables from .env into environment
+PATH = os.getenv('BOX_PATH')
 
 # unused: optionally embed using models in ollama server
 class MyEmbeddingFunction(EmbeddingFunction[Documents]):
@@ -54,22 +58,30 @@ class MyEmbeddingFunction(EmbeddingFunction[Documents]):
             embeddings.append(embedding["embedding"])
         return embeddings
 
+def filename2date(filename, df):
+    mp4 = re.sub('.summary', '.mp4', filename.split('/')[-1])
+    return df[df.video.str.contains(mp4)].iloc[0].date
+
 def make_vector_db(collection, file_iter):
     """
     Make the vector database and add to chroma collection.
     collection....chroma collection
     file_iter.....iterator over .summary files to be vectorized.
     """
+    df = pd.read_json(PATH + 'data.jsonl', orient='records', lines=True)
     print('embedding summaries...')
     for sfile in file_iter:
         print(sfile)
+        fdate = filename2date(sfile, df)
         # drop first summary as it covers the full meeting
         jsons = [json.loads(l) for l in open(sfile)][1:]
         # drop empty summaries
         jsons = [j for j in jsons if len(j['summary'].strip()) > 0]
+        metas = [{k:v for k,v in j.items() if k!='summary'} | 
+                       {'file':sfile, 'date': int(fdate.timestamp())} for j in jsons]
         collection.add(
             documents=[j['summary'] for j in jsons],
-            metadatas=[{k:v for k,v in j.items() if k!='summary'} | {'file':sfile} for j in jsons],
+            metadatas=metas,
             ids=[sfile + ':' + str(j['start_id']) + ':' + str(j['end_id']) for j in jsons]
         )
     print('...done')
@@ -97,4 +109,3 @@ if __name__ == "__main__":
                   "hnsw:num_threads": 1})
 
     make_vector_db(collection, glob.glob(os.getenv('BOX_PATH') + '*.summary'))
-
