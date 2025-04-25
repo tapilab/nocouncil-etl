@@ -7,4 +7,4 @@ pandas
 requests
 sentence-transformers[onnx]
 tqdm
-whisper
+git+https://github.com/openai/whisper.git
