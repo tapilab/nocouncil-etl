@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 import glob
 import json
 import numpy as np
-import ollama
+# import ollama
 import os
 import pandas as pd
 import re
@@ -25,38 +25,38 @@ load_dotenv()  # Loads variables from .env into environment
 PATH = os.getenv('BOX_PATH')
 
 # unused: optionally embed using models in ollama server
-class MyEmbeddingFunction(EmbeddingFunction[Documents]):
-    """
-    This class is used to get embeddings for a list of texts using Ollama Python Library.
-    It requires a host url and a model name. The default model name is "nomic-embed-text".
-    """
+# class MyEmbeddingFunction(EmbeddingFunction[Documents]):
+#     """
+#     This class is used to get embeddings for a list of texts using Ollama Python Library.
+#     It requires a host url and a model name. The default model name is "nomic-embed-text".
+#     """
 
-    def __init__(
-        self, host: str = "http://localhost:11434", model_name: str = "snowflake-arctic-embed2"
-    ):
-        self._client = ollama.Client(host=host)
-        self._model_name = model_name
+#     def __init__(
+#         self, host: str = "http://localhost:11434", model_name: str = "snowflake-arctic-embed2"
+#     ):
+#         self._client = ollama.Client(host=host)
+#         self._model_name = model_name
 
-    # "nomic-embed-text"
-    def __call__(self, input: Documents) -> Embeddings:
-        """
-        Get the embeddings for a list of texts.
-        Args:
-            input (Documents): A list of texts to get embeddings for.
-        Returns:
-            Embeddings: The embeddings for the texts.
-        Example:
-            >>> ollama = OllamaEmbeddingFunction(host="http://localhost:11434")
-            >>> texts = ["Hello, world!", "How are you?"]
-            >>> embeddings = ollama(texts)
-        """
+#     # "nomic-embed-text"
+#     def __call__(self, input: Documents) -> Embeddings:
+#         """
+#         Get the embeddings for a list of texts.
+#         Args:
+#             input (Documents): A list of texts to get embeddings for.
+#         Returns:
+#             Embeddings: The embeddings for the texts.
+#         Example:
+#             >>> ollama = OllamaEmbeddingFunction(host="http://localhost:11434")
+#             >>> texts = ["Hello, world!", "How are you?"]
+#             >>> embeddings = ollama(texts)
+#         """
 
-        embeddings = []
-        # Call Ollama Embedding API for each document.
-        for document in input:
-            embedding = self._client.embeddings(model=self._model_name, prompt=document)
-            embeddings.append(embedding["embedding"])
-        return embeddings
+#         embeddings = []
+#         # Call Ollama Embedding API for each document.
+#         for document in input:
+#             embedding = self._client.embeddings(model=self._model_name, prompt=document)
+#             embeddings.append(embedding["embedding"])
+#         return embeddings
 
 def filename2date(filename, df):
     mp4 = re.sub('.summary', '.mp4', filename.split('/')[-1])
