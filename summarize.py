@@ -63,12 +63,29 @@ class FocusedSummary(dspy.Signature):
     - ordinance numbers
     - docket numbers
     - street addresses
+
+    Also, include a few of the most relevant quotations from the transcript.
     """    
     text: str = dspy.InputField()
     proper_names: list[str] = dspy.InputField()
     ordinance_numbers: list[str] = dspy.InputField()
     docket_numbers: list[str] = dspy.InputField()
     street_addresses: list[str] = dspy.InputField()
+    relevant_quotations: list[str] = dspy.OutputField(desc='List of direct quotes from the transcript that are most relevant to the summary.')
+    summary: str = dspy.OutputField()
+
+class Summary(dspy.Signature):
+    """
+    Provide a detailed summary of the following transcript from a New Orleans City Council meeting. 
+    
+    Include all relevant names and numbers.
+    
+    Return just the summary, without any leading text like "Here is a summary..."
+
+    Also, return a few key quotes from the transcript.
+    """    
+    text: str = dspy.InputField()
+    key_quotes: list[str] = dspy.OutputField(desc='List of a few key quotes.')
     summary: str = dspy.OutputField()
 
 class SummaryOfSummaries(dspy.Signature):
@@ -81,7 +98,8 @@ class SummaryOfSummaries(dspy.Signature):
 
 class MeetingSummarizer(dspy.Module):
     def __init__(self):
-        self.summarize = dspy.ChainOfThought(FocusedSummary)
+        self.summarize = dspy.ChainOfThought(Summary)
+        # self.summarize = dspy.ChainOfThought(FocusedSummary)
         # self.summarize_summaries = dspy.ChainOfThought(SummaryOfSummariesFull)
         self.summarize_summaries = dspy.ChainOfThought(SummaryOfSummaries)
         self.get_names = dspy.ChainOfThought(ExtractProperNames)
@@ -99,26 +117,34 @@ class MeetingSummarizer(dspy.Module):
             end_js = jsons[min(len(jsons)-1, i+snippets_per_chunk-1)]
             text = get_text(jsons, i, i+snippets_per_chunk, no_speech_thresh=.2)
             proper_names = self.get_names(text=text).proper_names
-            ordinance_numbers = self.get_ordinances(text=text).ordinance_numbers
-            docket_numbers = self.get_dockets(text=text).docket_numbers
-            street_addresses = self.get_addresses(text=text).street_addresses                          
-            summary = summ(text=text,
-                           proper_names=proper_names,
-                           ordinance_numbers=ordinance_numbers,
-                           docket_numbers=docket_numbers,
-                           street_addresses=street_addresses)     
-            all_proper_names.extend(proper_names)
-            all_ordinance_numbers.extend(ordinance_numbers)
-            all_docket_numbers.extend(docket_numbers)
-            all_street_addresses.extend(street_addresses)
+            # ordinance_numbers = self.get_ordinances(text=text).ordinance_numbers
+            # docket_numbers = self.get_dockets(text=text).docket_numbers
+            # street_addresses = self.get_addresses(text=text).street_addresses                          
+            # summary = summ(text=text,
+            #                proper_names=proper_names,
+            #                ordinance_numbers=ordinance_numbers,
+            #                docket_numbers=docket_numbers,
+            #                street_addresses=street_addresses)    
+            summary = summ(text=text)
+            print('summary:', summary.summary)
+            print('quotes:', summary.key_quotes)   
+            print('names:', proper_names)          
+            # all_proper_names.extend(proper_names)
+            # all_ordinance_numbers.extend(ordinance_numbers)
+            # all_docket_numbers.extend(docket_numbers)
+            # all_street_addresses.extend(street_addresses)
             # print(summary.summary)
             summaries.append({'summary': summary.summary,
+                              'quotes': summary.key_quotes,
+                              'names': proper_names,
                               'start_time': start_js['start'],
                               'end_time': end_js['end'],
                               'start_id': start_js['id'],
                               'end_id': end_js['id']})
         result = summsumm(text='\n'.join(s['summary'] for s in summaries))
         summaries.insert(0, {'summary': result.summary,
+                             'quotes': [],
+                             'names': [],
                               'start_time': jsons[0]['start'],
                               'end_time': jsons[-1]['end'],
                               'start_id': jsons[0]['id'],
