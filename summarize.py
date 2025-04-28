@@ -116,6 +116,9 @@ class MeetingSummarizer(dspy.Module):
             start_js = jsons[i]
             end_js = jsons[min(len(jsons)-1, i+snippets_per_chunk-1)]
             text = get_text(jsons, i, i+snippets_per_chunk, no_speech_thresh=.2)
+            if len(text.strip()) < 2: # no text
+                print('skipping blanks')
+                continue
             proper_names = self.get_names(text=text).proper_names
             # ordinance_numbers = self.get_ordinances(text=text).ordinance_numbers
             # docket_numbers = self.get_dockets(text=text).docket_numbers
@@ -156,7 +159,7 @@ class MeetingSummarizer(dspy.Module):
 
 lm = dspy.LM('ollama_chat/' + os.getenv('LLAMA_VERSION'),
             api_base='http://localhost:11434', 
-            api_key='', temperature=0.001, max_tokens=10000)
+            api_key='', temperature=0.001, max_tokens=20000)
 dspy.configure(lm=lm)
 summarizer = MeetingSummarizer()
 df = pd.read_json(PATH + 'data.jsonl', orient='records', lines=True)
