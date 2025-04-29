@@ -177,8 +177,11 @@ for _, row in df.iterrows():
                 print('skipping empty transcript')
             else:
                 print('summarizing %d snippets' % len(js))
-                _, result = summarizer(js)
-                result.to_json(summary_fname, 
-                               orient='records',
-                               lines=True)
+                try:
+                    _, result = summarizer(js)
+                    result.to_json(summary_fname, 
+                                   orient='records',
+                                   lines=True)
+                except Exception as e:
+                    print('exception for %s:\nskipping %s' % (json_fname, e))
 
