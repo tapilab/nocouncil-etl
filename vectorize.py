@@ -79,7 +79,12 @@ def make_vector_db(collection, file_iter):
         # drop empty summaries
         if len(jsons) == 0:
             continue
-        fdate = filename2date(sfile, df)
+        fdate = None
+        try:
+            fdate = filename2date(sfile, df)
+        except Exception as e:
+            print('cannot parse %s' % sfile)
+            continue
         # flatten quotes and names into single strings, per chroma
         for i in range(len(jsons)):
             j = jsons[i]
