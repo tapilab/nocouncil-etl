@@ -45,7 +45,7 @@ if 'box_link' not in df.columns:
     df['box_link'] = None
 
 for item in tqdm(items):
-    if item.type == 'file' and item.name.endswith('.mp4'):
+    if item.type == 'file' and item.name.endswith('.mp4') and len(df[df.video.str.contains(item.name)]) > 0:
         if pd.isnull(df[df.video.str.contains(item.name)].box_link.iloc[0]):
             full_item = client.file(item.id).get()  # Fetch full metadata
 
