@@ -20,6 +20,7 @@ import pandas as pd
 import re
 from sentence_transformers import SentenceTransformer
 from typing import List
+from tqdm import tqdm
 
 load_dotenv()  # Loads variables from .env into environment
 PATH = os.getenv('BOX_PATH')
@@ -70,13 +71,21 @@ def make_vector_db(collection, file_iter):
     """
     df = pd.read_json(PATH + 'data.jsonl', orient='records', lines=True)
     print('embedding summaries...')
-    for sfile in file_iter:
-        print(sfile)
-        fdate = filename2date(sfile, df)
-        # drop first summary as it covers the full meeting
+    files = list(file_iter)
+    for sfile in tqdm(files):
         jsons = [json.loads(l) for l in open(sfile)][1:]
-        # drop empty summaries
         jsons = [j for j in jsons if len(j['summary'].strip()) > 0]
+        # drop first summary as it covers the full meeting
+        # drop empty summaries
+        if len(jsons) == 0:
+            continue
+        fdate = filename2date(sfile, df)
+        # flatten quotes and names into single strings, per chroma
+        for i in range(len(jsons)):
+            j = jsons[i]
+            j['quotes'] = '\n'.join(j['quotes'])
+            j['names'] = '\n'.join(j['names'])
+
         metas = [{k:v for k,v in j.items() if k!='summary'} | 
                        {'file':sfile, 'date': int(fdate.timestamp())} for j in jsons]
         collection.add(
