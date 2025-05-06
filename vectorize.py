@@ -88,8 +88,8 @@ def make_vector_db(collection, file_iter):
         # flatten quotes and names into single strings, per chroma
         for i in range(len(jsons)):
             j = jsons[i]
-            j['quotes'] = '\n'.join(j['quotes'])
-            j['names'] = '\n'.join(j['names'])
+            j['quotes'] = '|||'.join(j['quotes'])
+            j['names'] = '|||'.join(j['names'])
 
         metas = [{k:v for k,v in j.items() if k!='summary'} | 
                        {'file':sfile, 'date': int(fdate.timestamp())} for j in jsons]
