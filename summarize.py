@@ -169,7 +169,10 @@ for _, row in df.iterrows():
     # if we have a transcript
     if row.video is not None:
         fname = PATH + os.path.basename(row.video)
-        json_fname = re.sub('.mp4', '.json', fname)
+        json_fname = os.path.join(PATH, 'corrected_transcripts/', 
+                          os.path.basename(re.sub('.mp4', '.corrected.json', fname)))
+        if not os.path.exists(json_fname):
+            json_fname = re.sub('.mp4', '.json', fname)
         summary_fname = re.sub('.mp4', '.summary', fname)
         if not os.path.exists(summary_fname) and os.path.exists(json_fname):
             js = [json.loads(l) for l in open(json_fname) if len(l.strip()) > 0]
