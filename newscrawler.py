@@ -327,7 +327,7 @@ saved_at: {rec['saved_at']}
 def main():
     """Main crawler function"""
     print("\n" + "="*70)
-    print("  NOLA News RSS Crawler (Box Mount Version)")
+    print("  Crawler Crawling...")
     print("="*70)
     
     # Get Box folder path
@@ -349,9 +349,6 @@ def main():
     articles = load_articles_from_box(box_folder)
     seen = get_seen_urls(articles)
     print(f" Currently tracking {len(seen)} unique articles")
-    
-    if seen:
-        print(f"   Sample seen IDs: {list(seen)[:5]}")
     
     new_articles = []
     processed_count = 0
@@ -426,7 +423,6 @@ def main():
             articles.append(rec)
             try:
                 save_articles_to_box(box_folder, articles)
-                print(f"   State saved to Box (now tracking {len(articles)} articles)")
             except Exception as e:
                 print(f"   Failed to save state: {e}")
             
@@ -451,7 +447,6 @@ def main():
         print(f" Total articles tracked: {len(articles)}")
         print(f" Box folder: {box_folder}")
         print(f" State file: articles.json (tracks {len(articles)} articles)")
-        print(f"\n Tip: State is saved after EACH article, so Ctrl+C won't lose progress!")
     else:
         print("\n" + "="*70)
         print("  No new relevant articles found")
@@ -462,7 +457,7 @@ def main():
         print(f"   - No URL (skipped): {skipped_no_url}")
         print(f"   - New entries processed: {processed_count}")
         print(f"   - Passed relevance filter: {len(new_articles)}")
-        print(f"📋 State: {len(articles)} articles tracked in articles.json")
+        print(f"State: {len(articles)} articles tracked in articles.json")
 
 if __name__ == "__main__":
     try:
