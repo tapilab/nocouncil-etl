@@ -19,10 +19,27 @@ from chromadb.config import Settings
 from chromadb.utils.embedding_functions.sentence_transformer_embedding_function \
     import SentenceTransformerEmbeddingFunction
 from dotenv import load_dotenv
+import email.utils
 import json
 from pathlib import Path
 from typing import List, Dict
 from tqdm import tqdm
+
+
+def parse_published_to_unix(published: str) -> int | None:
+    """
+    Parse a published date string in RFC 2822 format to a Unix timestamp (int).
+    Handles formats like: 'Tue, 02 Sep 2025 20:57:54 +0000'
+
+    Returns Unix timestamp as int, or None if parsing fails.
+    """
+    if not published:
+        return None
+    try:
+        parsed = email.utils.parsedate_to_datetime(published)
+        return int(parsed.timestamp())
+    except Exception:
+        return None
 
 
 def load_articles_from_json(json_path: Path) -> List[Dict]:
@@ -148,7 +165,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         use_markdown: If True, also load from individual .md files
     """
     print("\n" + "="*70)
-    print("📰 Vectorizing News Articles")
+    print(" Vectorizing News Articles")
     print("="*70)
     
     # Handle articles folder path
@@ -159,7 +176,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         # Relative folder name - combine with box_path
         folder_path = Path(box_path) / articles_folder
     
-    print(f"📁 Articles folder: {folder_path}")
+    print(f" Articles folder: {folder_path}")
     
     if not folder_path.exists():
         print(f" Articles folder not found: {folder_path}")
@@ -171,7 +188,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
     # Load from articles.json
     json_path = folder_path / 'articles.json'
     if json_path.exists():
-        print(f"📥 Loading from {json_path.name}")
+        print(f" Loading from {json_path.name}")
         articles_from_json = load_articles_from_json(json_path)
         articles.extend(articles_from_json)
     else:
@@ -209,18 +226,23 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         
         documents.append(content)
         
+        # Parse published date to Unix timestamp
+        published_str = article.get('published', '')
+        published_unix = parse_published_to_unix(published_str)
+
         # Build metadata (exclude 'content' field as it's in documents)
         metadata = {
             'title': article.get('title', ''),
             'url': article.get('url', ''),
             'source': article.get('source', ''),
-            'published': article.get('published', ''),
+            'published': published_str,
+            'published_unix': published_unix,
             'saved_at': article.get('saved_at', ''),
             'filename': article.get('filename', ''),
         }
         
-        # Remove empty values
-        metadata = {k: v for k, v in metadata.items() if v}
+        # Remove empty string values (but keep 0 and valid ints)
+        metadata = {k: v for k, v in metadata.items() if v is not None and v != ''}
         metadatas.append(metadata)
         
         # Create unique ID
@@ -228,7 +250,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         ids.append(str(article_id))
     
     # Add to collection in batches
-    print('🔄 Adding to ChromaDB...')
+    print(' Adding to ChromaDB...')
     batch_size = 500
     total_added = 0
     
@@ -275,7 +297,7 @@ def main():
         print("   This should point to your Box mount location")
         return
     
-    print(f"\n📁 Configuration:")
+    print(f"\n Configuration:")
     print(f"   ChromaDB: {CHROMA_DB_DIR}")
     print(f"   Box Path: {BOX_PATH}")
     print(f"   Articles Folder: {BOX_ARTICLES_FOLDER}")
@@ -284,7 +306,7 @@ def main():
     chroma_path = Path(CHROMA_DB_DIR)
     box_path = Path(BOX_PATH)
     
-    print(f"\n🔍 Validating paths...")
+    print(f"\n Validating paths...")
     
     if not chroma_path.exists():
         print(f"   ChromaDB directory does not exist: {CHROMA_DB_DIR}")
