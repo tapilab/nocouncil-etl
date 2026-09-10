@@ -169,7 +169,7 @@ for _, row in df.iterrows():
     # if we have a transcript
     if row.video is not None:
         fname = PATH + os.path.basename(row.video)
-        json_fname = re.sub('.mp4', '.json', fname)
+        json_fname = re.sub('.mp4', '.corrected.json', fname)
         summary_fname = re.sub('.mp4', '.summary', fname)
         if not os.path.exists(summary_fname) and os.path.exists(json_fname):
             js = [json.loads(l) for l in open(json_fname) if len(l.strip()) > 0]
@@ -184,4 +184,3 @@ for _, row in df.iterrows():
                                    lines=True)
                 except Exception as e:
                     print('exception for %s:\nskipping %s' % (json_fname, e))
-

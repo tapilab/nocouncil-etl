@@ -4,7 +4,7 @@ Adds news articles collection to existing ChromaDB
 Reads from Box-mounted folders, writes to local ChromaDB
 """
 import os
-import sys
+import re
 import warnings
 
 # Disable ChromaDB telemetry BEFORE importing chromadb
@@ -15,6 +15,7 @@ warnings.filterwarnings('ignore', message='.*telemetry.*')
 
 import chromadb
 from chromadb import PersistentClient
+from chromadb.api.client import Client as ClientCreator
 from chromadb.config import Settings
 from chromadb.utils.embedding_functions.sentence_transformer_embedding_function \
     import SentenceTransformerEmbeddingFunction
@@ -22,11 +23,50 @@ from dotenv import load_dotenv
 import email.utils
 import json
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 from tqdm import tqdm
 
 
-def parse_published_to_unix(published: str) -> int | None:
+def make_persistent_chroma_client(chroma_db_dir: str):
+    """
+    Create a persistent Chroma client.
+
+    Chroma 1.0.5 can panic inside the Rust-backed PersistentClient on some
+    existing local databases (e.g. one whose sqlite schema was forward-migrated
+    by a newer chromadb version). When that happens, fall back to the older
+    SegmentAPI implementation, which is slower but more robust for this repo's
+    existing on-disk state.
+    """
+    base_settings = Settings(anonymized_telemetry=False)
+    chroma_version = getattr(chromadb, "__version__", "")
+    force_segment = os.getenv("CHROMA_FORCE_SEGMENT_API", "").lower() in {"1", "true", "yes"}
+
+    if force_segment:
+        print("   Using SegmentAPI persistent client (env override)")
+        fallback_settings = Settings(anonymized_telemetry=False)
+        fallback_settings.chroma_api_impl = "chromadb.api.segment.SegmentAPI"
+        fallback_settings.is_persistent = True
+        fallback_settings.persist_directory = chroma_db_dir
+        return ClientCreator(settings=fallback_settings)
+
+    try:
+        return PersistentClient(
+            path=chroma_db_dir,
+            settings=base_settings,
+        )
+    except BaseException as exc:
+        print("   Rust PersistentClient failed, retrying with SegmentAPI fallback...")
+        print(f"   Reason: {type(exc).__name__}: {exc}")
+
+        fallback_settings = Settings(anonymized_telemetry=False)
+        fallback_settings.chroma_api_impl = "chromadb.api.segment.SegmentAPI"
+        fallback_settings.is_persistent = True
+        fallback_settings.persist_directory = chroma_db_dir
+
+        return ClientCreator(settings=fallback_settings)
+
+
+def parse_published_to_unix(published: str) -> Optional[int]:
     """
     Parse a published date string in RFC 2822 format to a Unix timestamp (int).
     Handles formats like: 'Tue, 02 Sep 2025 20:57:54 +0000'
@@ -40,6 +80,97 @@ def parse_published_to_unix(published: str) -> int | None:
         return int(parsed.timestamp())
     except Exception:
         return None
+
+
+def split_into_sentences(text: str) -> list[str]:
+    """Split text into approximate sentences without external dependencies."""
+    normalized = re.sub(r'\s+', ' ', text).strip()
+    if not normalized:
+        return []
+
+    # Keep sentence-ending punctuation attached to the sentence.
+    sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z0-9"\'])', normalized)
+    return [s.strip() for s in sentences if s.strip()]
+
+
+def chunk_text_semantically(
+    text: str,
+    target_words: int = 350,
+    max_words: int = 450,
+    overlap_sentences: int = 1,
+) -> list[str]:
+    """
+    Chunk text on paragraph/sentence boundaries rather than raw word windows.
+
+    Strategy:
+    - preserve paragraph boundaries when possible
+    - accumulate full sentences up to a target size
+    - cap chunk size to avoid giant passages
+    - carry a small sentence overlap for retrieval continuity
+    """
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n+', text) if p.strip()]
+    if not paragraphs:
+        return []
+
+    chunks: list[str] = []
+    current_sentences: list[str] = []
+    current_words = 0
+    pending_new_sentences = 0
+
+    def flush_chunk() -> None:
+        nonlocal current_sentences, current_words, pending_new_sentences
+        if not current_sentences or pending_new_sentences == 0:
+            return
+        chunks.append(' '.join(current_sentences).strip())
+        overlap = current_sentences[-overlap_sentences:] if overlap_sentences > 0 else []
+        current_sentences = overlap[:]
+        current_words = sum(len(s.split()) for s in current_sentences)
+        pending_new_sentences = 0
+
+    for paragraph in paragraphs:
+        sentences = split_into_sentences(paragraph)
+        if not sentences:
+            continue
+
+        for sentence in sentences:
+            sentence_words = len(sentence.split())
+
+            # Split unusually long sentences so one sentence cannot dominate a chunk.
+            if sentence_words > max_words:
+                if current_sentences:
+                    flush_chunk()
+                words = sentence.split()
+                for i in range(0, len(words), target_words):
+                    piece = ' '.join(words[i:i + target_words]).strip()
+                    if piece:
+                        chunks.append(piece)
+                current_sentences = []
+                current_words = 0
+                pending_new_sentences = 0
+                continue
+
+            would_exceed_max = current_words > 0 and current_words + sentence_words > max_words
+            reached_target = current_words >= target_words
+            if would_exceed_max or reached_target:
+                flush_chunk()
+
+            current_sentences.append(sentence)
+            current_words += sentence_words
+            pending_new_sentences += 1
+
+        # Prefer to end chunks at paragraph boundaries once they are reasonably full.
+        if current_words >= target_words:
+            flush_chunk()
+
+    if current_sentences and pending_new_sentences > 0:
+        chunks.append(' '.join(current_sentences).strip())
+
+    # Drop accidental duplicates from overlap-only flushes.
+    deduped_chunks: list[str] = []
+    for chunk in chunks:
+        if chunk and (not deduped_chunks or deduped_chunks[-1] != chunk):
+            deduped_chunks.append(chunk)
+    return deduped_chunks
 
 
 def load_articles_from_json(json_path: Path) -> List[Dict]:
@@ -72,7 +203,7 @@ def load_articles_from_json(json_path: Path) -> List[Dict]:
         return []
 
 
-def parse_markdown_frontmatter(md_path: Path) -> tuple[Dict, str]:
+def parse_markdown_frontmatter(md_path: Path) -> Tuple[Dict, str]:
     """
     Parse markdown file with YAML frontmatter.
     
@@ -126,7 +257,7 @@ def load_articles_from_markdown(folder_path: Path) -> List[Dict]:
     
     articles = []
     
-    for md_path in md_files:
+    for md_path in tqdm(md_files, desc="Loading markdown", unit="file"):
         try:
             metadata, content = parse_markdown_frontmatter(md_path)
             
@@ -154,18 +285,31 @@ def load_articles_from_markdown(folder_path: Path) -> List[Dict]:
     return articles
 
 
-def vectorize_articles(collection, box_path: str, articles_folder: str, use_markdown: bool = True):
+def vectorize_articles(
+    collection,
+    box_path: str,
+    articles_folder: str,
+    use_markdown: bool = True,
+    target_chunk_words: int = 350,
+    max_chunk_words: int = 450,
+    overlap_sentences: int = 1,
+):
     """
     Vectorize news articles from articles.json and/or markdown files.
-    
+    Each article is split into overlapping chunks so retrieval returns
+    the relevant passage rather than the full article text.
+
     Args:
         collection: ChromaDB collection for articles
         box_path: Path to Box root folder
         articles_folder: Relative folder name or full path to articles
         use_markdown: If True, also load from individual .md files
+        target_chunk_words: Preferred chunk size in words
+        max_chunk_words: Hard cap for chunk size in words
+        overlap_sentences: Number of trailing sentences to repeat between chunks
     """
     print("\n" + "="*70)
-    print(" Vectorizing News Articles")
+    print("📰 Vectorizing News Articles")
     print("="*70)
     
     # Handle articles folder path
@@ -176,7 +320,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         # Relative folder name - combine with box_path
         folder_path = Path(box_path) / articles_folder
     
-    print(f" Articles folder: {folder_path}")
+    print(f"📁 Articles folder: {folder_path}")
     
     if not folder_path.exists():
         print(f" Articles folder not found: {folder_path}")
@@ -188,7 +332,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
     # Load from articles.json
     json_path = folder_path / 'articles.json'
     if json_path.exists():
-        print(f" Loading from {json_path.name}")
+        print(f"📥 Loading from {json_path.name}")
         articles_from_json = load_articles_from_json(json_path)
         articles.extend(articles_from_json)
     else:
@@ -203,6 +347,22 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
     if not articles:
         print(" No articles found to vectorize")
         return collection
+
+    # Deduplicate repeated articles loaded from JSON + markdown.
+    deduped_articles = []
+    seen_article_keys = set()
+    for article in articles:
+        article_key = (
+            article.get('id')
+            or article.get('url')
+            or article.get('filename')
+            or f"{article.get('title', '')}:{len(article.get('content', ''))}"
+        )
+        if article_key in seen_article_keys:
+            continue
+        seen_article_keys.add(article_key)
+        deduped_articles.append(article)
+    articles = deduped_articles
     
     # Filter out articles without content
     articles = [a for a in articles if a.get('content', '').strip()]
@@ -224,14 +384,12 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         if not content.strip():
             continue
         
-        documents.append(content)
-        
         # Parse published date to Unix timestamp
         published_str = article.get('published', '')
         published_unix = parse_published_to_unix(published_str)
 
-        # Build metadata (exclude 'content' field as it's in documents)
-        metadata = {
+        # Build base metadata shared across all chunks of this article
+        base_metadata = {
             'title': article.get('title', ''),
             'url': article.get('url', ''),
             'source': article.get('source', ''),
@@ -240,17 +398,30 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
             'saved_at': article.get('saved_at', ''),
             'filename': article.get('filename', ''),
         }
-        
         # Remove empty string values (but keep 0 and valid ints)
-        metadata = {k: v for k, v in metadata.items() if v is not None and v != ''}
-        metadatas.append(metadata)
-        
-        # Create unique ID
+        base_metadata = {k: v for k, v in base_metadata.items() if v is not None and v != ''}
+
+        # Split article into semantically aligned chunks.
         article_id = article.get('id') or article.get('url') or f"article_{i}"
-        ids.append(str(article_id))
+        chunks = chunk_text_semantically(
+            content,
+            target_words=target_chunk_words,
+            max_words=max_chunk_words,
+            overlap_sentences=overlap_sentences,
+        )
+
+        for j, chunk in enumerate(chunks):
+            documents.append(chunk)
+            metadatas.append({
+                **base_metadata,
+                'chunk': j,
+                'total_chunks': len(chunks),
+                'chunking_strategy': 'semantic_sentence_paragraph',
+            })
+            ids.append(f"{article_id}_chunk{j}")
     
     # Add to collection in batches
-    print(' Adding to ChromaDB...')
+    print('🔄 Adding to ChromaDB...')
     batch_size = 500
     total_added = 0
     
@@ -259,7 +430,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         batch_metas = metadatas[i:i + batch_size]
         batch_ids = ids[i:i + batch_size]
         
-        collection.add(
+        collection.upsert(
             documents=batch_docs,
             metadatas=batch_metas,
             ids=batch_ids
@@ -267,7 +438,7 @@ def vectorize_articles(collection, box_path: str, articles_folder: str, use_mark
         
         total_added += len(batch_docs)
     
-    print(f'Done! Added {total_added} articles')
+    print(f'Done! Added {total_added} chunks from {len(articles)} articles')
     return collection
 
 
@@ -297,7 +468,7 @@ def main():
         print("   This should point to your Box mount location")
         return
     
-    print(f"\n Configuration:")
+    print(f"\n📁 Configuration:")
     print(f"   ChromaDB: {CHROMA_DB_DIR}")
     print(f"   Box Path: {BOX_PATH}")
     print(f"   Articles Folder: {BOX_ARTICLES_FOLDER}")
@@ -306,7 +477,7 @@ def main():
     chroma_path = Path(CHROMA_DB_DIR)
     box_path = Path(BOX_PATH)
     
-    print(f"\n Validating paths...")
+    print(f"\n🔍 Validating paths...")
     
     if not chroma_path.exists():
         print(f"   ChromaDB directory does not exist: {CHROMA_DB_DIR}")
@@ -324,10 +495,8 @@ def main():
     
     # Initialize ChromaDB client
     print(f"\n Initializing ChromaDB...")
-    chroma_client = PersistentClient(
-        path=CHROMA_DB_DIR,
-        settings=Settings(anonymized_telemetry=False)
-    )
+    chroma_client = make_persistent_chroma_client(CHROMA_DB_DIR)
+    print(f"   Using API implementation: {chroma_client.get_settings().chroma_api_impl}")
     
     # Check existing collections
     existing_collections = chroma_client.list_collections()
@@ -360,7 +529,7 @@ def main():
     existing_count = collection_articles.count()
     if existing_count > 0:
         print(f"\n Articles collection already exists with {existing_count} items")
-        print(f"   New articles will be added (duplicates will be updated)")
+        print(f"   Existing article chunks will be upserted by stable IDs")
     
     # Vectorize articles
     vectorize_articles(collection_articles, BOX_PATH, BOX_ARTICLES_FOLDER, use_markdown=True)
